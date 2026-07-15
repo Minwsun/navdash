@@ -20,9 +20,9 @@ ESP32 SoftAP + K1G packet logger for Royal Enfield iOS research.
 
 The dash AP is `192.168.1.1/24`; iPhone control traffic targets UDP `2000` and H.264/RTP targets UDP `5000`. The iPhone listens on UDP `2002` for dash replies. Firmware only receives/logs `2000` and `5000`; it does not send unproven replies.
 
-The firmware broadcasts the K1G announce on UDP `2000`; replies use source UDP `2002` and destination UDP `2002`, matching the asymmetric K1G control path. It handles only the observed RSA handshake: `08/04` → `07/00` + `07/03`, then `08/00` → `07/01`.
+The firmware broadcasts the K1G announce on UDP `2000`; replies originate from UDP `2000` and target the iPhone's UDP `2002`. It handles only the observed RSA handshake: `08/04` → `07/00` + `07/03`, then `08/00` → `07/01`.
 
-The RSA identity persists in ESP32 NVS. A reboot must log `RSA RESTORED result=0 persisted=YES`; pairing state cannot survive if the dash key changes.
+The firmware generates a runtime RSA key at boot. This matches the captured working baseline; persistent identity is deferred until a pairing capture proves it is required.
 
 ## Next evidence
 

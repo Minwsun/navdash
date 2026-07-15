@@ -1,6 +1,5 @@
 #include <Arduino.h>
 #include <ESPmDNS.h>
-#include <Preferences.h>
 #include <WiFi.h>
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -11,10 +10,9 @@
 const IPAddress kDashIp(192, 168, 1, 1);
 const IPAddress kNoDefaultGateway(0, 0, 0, 0);
 const IPAddress kBroadcastIp(192, 168, 1, 255);
-constexpr uint16_t kUdpPorts[] = {2000, 2002, 5000};
+constexpr uint16_t kUdpPorts[] = {2000, 5000};
 constexpr size_t kUdpPortCount = sizeof(kUdpPorts) / sizeof(kUdpPorts[0]);
 constexpr size_t kControlSocket = 0;
-constexpr size_t kReplySocket = 1;
 constexpr uint8_t kBikeAnnounce[] = {0x00, 0x18, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00,
                                      0x02, 0x01, 0x00, 0x05, 0x4B, 0x31, 0x47, 0x20,
                                      0x02, 0x06, 0x06, 0x00, 0x03, 0x0E, 0x33, 0x34};
@@ -26,29 +24,6 @@ uint8_t k1gSequence;
 mbedtls_entropy_context entropy;
 mbedtls_ctr_drbg_context drbg;
 mbedtls_rsa_context rsa;
-
-bool loadRsaIdentity(Preferences &preferences) {
-  uint8_t n[128], e[3], d[128], p[64], q[64];
-  if (preferences.getBytesLength("n") != sizeof(n) || preferences.getBytesLength("e") != sizeof(e) ||
-      preferences.getBytesLength("d") != sizeof(d) || preferences.getBytesLength("p") != sizeof(p) ||
-      preferences.getBytesLength("q") != sizeof(q) || preferences.getBytes("n", n, sizeof(n)) != sizeof(n) ||
-      preferences.getBytes("e", e, sizeof(e)) != sizeof(e) || preferences.getBytes("d", d, sizeof(d)) != sizeof(d) ||
-      preferences.getBytes("p", p, sizeof(p)) != sizeof(p) || preferences.getBytes("q", q, sizeof(q)) != sizeof(q)) return false;
-  return mbedtls_rsa_import_raw(&rsa, n, sizeof(n), p, sizeof(p), q, sizeof(q), d, sizeof(d), e, sizeof(e)) == 0 &&
-         mbedtls_rsa_complete(&rsa) == 0 && mbedtls_rsa_check_privkey(&rsa) == 0;
-}
-
-bool writeMpi(Preferences &preferences, const char *key, const mbedtls_mpi *value, size_t length) {
-  uint8_t bytes[128] = {};
-  return length <= sizeof(bytes) && mbedtls_mpi_write_binary(value, bytes, length) == 0 &&
-         preferences.putBytes(key, bytes, length) == length;
-}
-
-bool saveRsaIdentity(Preferences &preferences) {
-  return writeMpi(preferences, "n", &rsa.N, 128) && writeMpi(preferences, "e", &rsa.E, 3) &&
-         writeMpi(preferences, "d", &rsa.D, 128) && writeMpi(preferences, "p", &rsa.P, 64) &&
-         writeMpi(preferences, "q", &rsa.Q, 64);
-}
 
 void sendBikeAnnounceToPeer(const IPAddress &peer);
 
@@ -64,9 +39,9 @@ bool sendEnvelope(const IPAddress &peer, const uint8_t *segments, size_t segment
   Serial.printf("TX K1G -> %s:2002 len=%u first=%02X%02X\n", peer.toString().c_str(), length,
                 segmentsLength > 0 ? segments[0] : 0, segmentsLength > 1 ? segments[1] : 0);
 
-  udpSockets[kReplySocket].beginPacket(peer, 2002);
-  udpSockets[kReplySocket].write(packet, length);
-  return udpSockets[kReplySocket].endPacket() == 1;
+  udpSockets[kControlSocket].beginPacket(peer, 2002);
+  udpSockets[kControlSocket].write(packet, length);
+  return udpSockets[kControlSocket].endPacket() == 1;
 }
 
 void handleK1g(const uint8_t *data, size_t length, const IPAddress &peer) {
@@ -109,6 +84,9 @@ void logWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
     Serial.printf("WIFI_LEAVE mac=%02X:%02X:%02X:%02X:%02X:%02X aid=%u\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
                   info.wifi_ap_stadisconnected.aid);
     Serial.printf("WIFI_EVENT code=%d stations=%u\n", event, WiFi.softAPgetStationNum());
+  } else if (event == ARDUINO_EVENT_WIFI_AP_STAIPASSIGNED) {
+    IPAddress assigned(info.wifi_ap_staipassigned.ip.addr);
+    Serial.printf("DHCP_LEASE ip=%s\n", assigned.toString().c_str());
   }
 }
 
@@ -154,10 +132,10 @@ void sendBikeAnnounceToPeer(const IPAddress &peer) {
   uint8_t announce[sizeof(kBikeAnnounce)];
   memcpy(announce, kBikeAnnounce, sizeof(announce));
   announce[16] = k1gSequence++;
-  udpSockets[kReplySocket].beginPacket(peer, 2002);
-  udpSockets[kReplySocket].write(announce, sizeof(announce));
-  udpSockets[kReplySocket].endPacket();
-  Serial.printf("ANNOUNCE 2002 -> %s:2002\n", peer.toString().c_str());
+  udpSockets[kControlSocket].beginPacket(peer, 2002);
+  udpSockets[kControlSocket].write(announce, sizeof(announce));
+  udpSockets[kControlSocket].endPacket();
+  Serial.printf("ANNOUNCE 2000 -> %s:2002\n", peer.toString().c_str());
 }
 
 void setup() {
@@ -167,13 +145,8 @@ void setup() {
   const char *personalization = "navdash-k1g";
   const int seedResult = mbedtls_ctr_drbg_seed(&drbg, mbedtls_entropy_func, &entropy,
                                                 reinterpret_cast<const uint8_t *>(personalization), strlen(personalization));
-  Preferences preferences;
-  preferences.begin("k1g", false);
-  const bool loaded = seedResult == 0 && loadRsaIdentity(preferences);
-  const int keyResult = loaded ? 0 : (seedResult == 0 ? mbedtls_rsa_gen_key(&rsa, mbedtls_ctr_drbg_random, &drbg, 1024, 65537) : seedResult);
-  const bool saved = keyResult == 0 && (!loaded ? saveRsaIdentity(preferences) : true);
-  preferences.end();
-  Serial.printf("RSA %s result=%d persisted=%s\n", loaded ? "RESTORED" : "GENERATED", keyResult, saved ? "YES" : "NO");
+  const int keyResult = seedResult == 0 ? mbedtls_rsa_gen_key(&rsa, mbedtls_ctr_drbg_random, &drbg, 1024, 65537) : seedResult;
+  Serial.printf("RSA READY result=%d\n", keyResult);
   WiFi.mode(WIFI_AP);
   WiFi.setSleep(false);
   WiFi.softAPConfig(kDashIp, kNoDefaultGateway, IPAddress(255, 255, 255, 0));
