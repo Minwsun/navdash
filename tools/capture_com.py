@@ -11,6 +11,8 @@ log_path.parent.mkdir(parents=True, exist_ok=True)
 
 with log_path.open("a", encoding="utf-8") as log:
     with serial.Serial(port_name, 115200, timeout=1) as port:
+        port.dtr = False
+        port.rts = False
         while True:
             line = port.readline().decode("utf-8", errors="replace")
             if line:
