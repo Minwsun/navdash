@@ -3,3 +3,10 @@
 captures/
 ipa/
 .logn
+.tools/
+analysis/
+__pycache__/
+*.pyc
+*.h264
+*.raw
+*.png
