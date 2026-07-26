@@ -2,6 +2,13 @@
 
 #include <SPI.h>
 
+#if __has_include("royal_frame.h")
+#include "royal_frame.h"
+#define NAVDASH_HAS_ROYAL_FRAME 1
+#else
+#define NAVDASH_HAS_ROYAL_FRAME 0
+#endif
+
 #ifndef TFT_BL
 #define TFT_BL -1
 #endif
@@ -206,14 +213,43 @@ void drawCompressedIdrFrame(const uint8_t *payload, size_t length) {
 }
 
 void drawRgb565Line(uint16_t x, uint16_t y, const uint8_t *rgb565, uint16_t width) {
-  if (!initialized || y >= kTftHeight || x >= kTftWidth || width == 0) {
+  drawRgb565Block(x, y, rgb565, width, 1);
+}
+
+void drawRgb565Block(uint16_t x, uint16_t y, const uint8_t *rgb565, uint16_t width, uint16_t height) {
+  if (!initialized || y >= kTftHeight || x >= kTftWidth || width == 0 || height == 0) {
     return;
   }
   if (x + width > kTftWidth) {
     width = kTftWidth - x;
   }
-  setAddress(x, y, x + width - 1, y);
-  data(rgb565, static_cast<size_t>(width) * 2);
+  if (y + height > kTftHeight) {
+    height = kTftHeight - y;
+  }
+  setAddress(x, y, x + width - 1, y + height - 1);
+  data(rgb565, static_cast<size_t>(width) * height * 2);
+}
+
+void drawRoyalFrame() {
+#if NAVDASH_HAS_ROYAL_FRAME
+  if (!initialized) {
+    return;
+  }
+  uint8_t line[kRoyalFrameWidth * 2];
+  const uint16_t x0 = (kTftWidth - kRoyalFrameWidth) / 2;
+  const uint16_t y0 = (kTftHeight - kRoyalFrameHeight) / 2;
+  for (uint16_t y = 0; y < kRoyalFrameHeight; ++y) {
+    for (uint16_t x = 0; x < kRoyalFrameWidth; ++x) {
+      const uint16_t color = pgm_read_word(&kRoyalFrameRgb565[static_cast<size_t>(y) * kRoyalFrameWidth + x]);
+      line[x * 2] = color >> 8;
+      line[x * 2 + 1] = color;
+    }
+    drawRgb565Line(x0, y0 + y, line, kRoyalFrameWidth);
+  }
+  Serial.println("TFT REAL_FRAME drawn");
+#else
+  Serial.println("TFT REAL_FRAME missing include/royal_frame.h");
+#endif
 }
 
 }  // namespace navdash_lcd

@@ -3,16 +3,15 @@
 #include <Arduino.h>
 #include <IPAddress.h>
 
-namespace royal_dash {
+namespace navdash_connection {
 
-// Pairing-critical internal module. Do not include from feature code.
-// Use navdash_connection.h from runtime/video/http modules.
 using VideoPacketHandler = void (*)(const IPAddress &remote, uint16_t remotePort, const uint8_t *data, size_t length);
 
 void begin();
 void update();
-void setVideoPacketHandler(VideoPacketHandler handler);
 bool isAuthenticated();
 bool isStationConnected();
+void setVideoPacketHandler(VideoPacketHandler handler);
+void clearVideoPacketHandler();
 
-}
+}  // namespace navdash_connection

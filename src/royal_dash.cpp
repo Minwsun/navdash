@@ -50,6 +50,14 @@ void setVideoPacketHandler(VideoPacketHandler handler) {
   videoPacketHandler = handler;
 }
 
+bool isAuthenticated() {
+  return sessionKeyReady;
+}
+
+bool isStationConnected() {
+  return WiFi.softAPgetStationNum() > 0;
+}
+
 bool loadRsaIdentity(Preferences &preferences) {
   uint8_t n[128], e[3], d[128], p[64], q[64];
   if (preferences.getBytesLength("n") != sizeof(n) || preferences.getBytesLength("e") != sizeof(e) ||

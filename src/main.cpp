@@ -1,22 +1,34 @@
+#include <Arduino.h>
+
+#if NAVDASH_H264_PROBE
+#include "navdash_h264_collector.h"
 #include "royal_dash.h"
-#include "navdash_lcd.h"
-#include "navdash_video.h"
+#elif NAVDASH_PAIRING_BASELINE
+#include "royal_dash.h"
+#else
+#include "navdash_runtime.h"
+#endif
 
 void setup() {
   Serial.begin(115200);
-#if NAVDASH_ENABLE_LCD
-  navdash_lcd::begin();
-#endif
-#if NAVDASH_ENABLE_VIDEO
-  navdash_video::begin();
-  royal_dash::setVideoPacketHandler(navdash_video::handlePacket);
-#endif
+#if NAVDASH_H264_PROBE
   royal_dash::begin();
+  navdash_h264_collector::begin();
+  royal_dash::setVideoPacketHandler(navdash_h264_collector::handlePacket);
+#elif NAVDASH_PAIRING_BASELINE
+  royal_dash::begin();
+#else
+  navdash_runtime::begin();
+#endif
 }
 
 void loop() {
+#if NAVDASH_H264_PROBE
   royal_dash::update();
-#if NAVDASH_ENABLE_VIDEO
-  navdash_video::update();
+  navdash_h264_collector::update();
+#elif NAVDASH_PAIRING_BASELINE
+  royal_dash::update();
+#else
+  navdash_runtime::update();
 #endif
 }

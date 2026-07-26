@@ -497,8 +497,8 @@ AP/DHCP/RSA/K1G code owns pairing.
 Video/H264 is optional and registered by callback only.
 royal_dash.cpp must not include navdash_video.h.
 Auth hint starts only after DHCP_LEASE or real K1G peer.
-Auth hint cadence: 300 ms.
-Auth hint limit: 12 sends.
+Auth hint cadence: 700 ms.
+Auth hint limit: 6 sends.
 Reply target: peer:2002.
 Reply source sockets: UDP 2000 and UDP 2002.
 DHCP gateway: 0.0.0.0.
@@ -508,19 +508,21 @@ Current module boundary:
 
 ```text
 src/main.cpp
-  setup()
-    optional navdash_lcd::begin() when NAVDASH_ENABLE_LCD=1
-    optional navdash_video::begin() + royal_dash::setVideoPacketHandler() when NAVDASH_ENABLE_VIDEO=1
-    royal_dash::begin()
+  setup()/loop() call navdash_runtime only.
 
-  loop()
-    royal_dash::update()
-    optional navdash_video::update() when NAVDASH_ENABLE_VIDEO=1
+src/navdash_runtime.cpp
+  owns LCD/video lifecycle.
+  calls navdash_connection only.
+  must not include royal_dash.h.
+
+src/navdash_connection.cpp
+  stable facade for pairing.
+  only file outside royal_dash.cpp allowed to call royal_dash APIs.
 
 src/royal_dash.cpp
   owns SoftAP, DHCP, UDP 2000/2002/5000 sockets, RSA NVS, K1G envelope, 07/00, 07/03, 07/01, 0F metadata.
   never calls H264 decode directly.
-  forwards UDP 5000 only when a video callback is registered.
+  forwards UDP 5000 only when a video callback is registered through navdash_connection.
 ```
 
 Hard restore check:
