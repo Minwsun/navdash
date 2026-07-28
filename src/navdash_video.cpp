@@ -631,9 +631,6 @@ void beginApproxFrame() {
   prepareRollingRow(0);
   rollingImage = {rollingImageData, kSourceMbWidth, 2, nullptr, nullptr, nullptr};
   memset(mbPixelWords, 0, kMbPixelBytes);
-  memset(y4Cache, 0, kY4Bytes);
-  memset(u4Cache, 0x88, kChroma4Bytes);
-  memset(v4Cache, 0x88, kChroma4Bytes);
   frameNextMb = 0;
   frameSliceId = 0;
   frameState = FrameState::Decoding;
@@ -958,6 +955,17 @@ void trackRoyalPayload(const uint8_t *payload, size_t length, bool marker) {
       return;
     }
     appendLiveNal(payload + 2, length - 2);
+    return;
+  }
+  if (length >= 2 && payload[0] == 0x3C && payload[1] == 0x47) {
+    ++stats.continuations;
+    if (!liveNalOpen) {
+      ++stats.unsupportedNal;
+      return;
+    }
+    if (appendLiveNal(payload + 2, length - 2) && marker) {
+      completeLiveNal();
+    }
     return;
   }
   if ((payload[0] & 0x1F) == 6) {
