@@ -29,15 +29,17 @@ namespace navdash_video {
 constexpr uint16_t kFrameWidth = 240;
 constexpr uint16_t kFrameHeight = 240;
 constexpr size_t kY4Bytes = kFrameWidth * kFrameHeight / 2;
-constexpr size_t kClass2Bytes = kFrameWidth * kFrameHeight / 4;
+constexpr uint16_t kChromaWidth = kFrameWidth / 2;
+constexpr uint16_t kChromaHeight = kFrameHeight / 2;
+constexpr size_t kChroma4Bytes = kChromaWidth * kChromaHeight / 2;
 constexpr uint32_t kLogIntervalMs = 1000;
 constexpr uint32_t kDecodeIntervalMs = 1000;
 constexpr uint32_t kMinDecodeHeapBytes = 90000;
 constexpr uint32_t kEmergencyHeapBytes = 80000;
-constexpr size_t kPacketSlotCount = 6;
+constexpr size_t kPacketSlotCount = 4;
 constexpr size_t kPacketBytes = 1472;
-constexpr uint32_t kVideoTaskStack = 4608;
-constexpr size_t kLiveNalBytes = 24 * 1024;
+constexpr uint32_t kVideoTaskStack = 3584;
+constexpr size_t kLiveNalBytes = 20 * 1024;
 constexpr size_t kRbspScratchBytes = 512;
 constexpr uint16_t kPresentLines = 8;
 constexpr size_t kPresentBytes = kFrameWidth * kPresentLines * 2;
@@ -57,7 +59,8 @@ constexpr size_t kMbPixelWords = 384 / 4;
 constexpr size_t kMbPixelBytes = kMbPixelWords * sizeof(uint32_t);
 
 uint8_t *y4Cache;
-uint8_t *class2Cache;
+uint8_t *u4Cache;
+uint8_t *v4Cache;
 uint8_t *liveNal;
 uint8_t *rbspScratch;
 mbStorage_t (*mbRows)[kSourceMbWidth];
@@ -470,25 +473,40 @@ void storeApproxMb(uint16_t mbAddr, uint8_t yValue, uint8_t) {
   }
 }
 
-uint8_t classifyYuv(uint8_t y, uint8_t u, uint8_t v) {
-  if (y >= 58 && y <= 130 && u >= 140 && u <= 150 && v >= 117 && v <= 123 && u - v >= 18) return 3;
-  if (y >= 115 && y <= 220 && u >= 130 && u <= 140 && v >= 121 && v <= 127) return 2;
-  if (y >= 48 && y <= 150 && u >= 132 && u <= 141 && v >= 121 && v <= 128) return 1;
-  return 0;
+void setPacked4(uint8_t *cache, size_t pixel, uint8_t value) {
+  if (pixel & 1) cache[pixel >> 1] = (cache[pixel >> 1] & 0xF0) | value;
+  else cache[pixel >> 1] = (cache[pixel >> 1] & 0x0F) | (value << 4);
+}
+
+uint8_t getPacked4(const uint8_t *cache, size_t pixel) {
+  const uint8_t packed = cache[pixel >> 1];
+  return (pixel & 1) ? (packed & 0x0F) : (packed >> 4);
 }
 
 void setPackedPixel(size_t pixel, uint8_t yValue, uint8_t uValue, uint8_t vValue) {
-  const uint8_t y4 = yValue >> 4;
-  if (pixel & 1) {
-    y4Cache[pixel >> 1] = (y4Cache[pixel >> 1] & 0xF0) | y4;
-  } else {
-    y4Cache[pixel >> 1] = (y4Cache[pixel >> 1] & 0x0F) | (y4 << 4);
-  }
-  const uint8_t cls = classifyYuv(yValue, uValue, vValue);
-  if (!class2Cache) return;
-  const size_t ci = pixel >> 2;
-  const uint8_t shift = (pixel & 3) * 2;
-  class2Cache[ci] = (class2Cache[ci] & ~(0x03 << shift)) | ((cls & 0x03) << shift);
+  setPacked4(y4Cache, pixel, yValue >> 4);
+  if (!u4Cache || !v4Cache) return;
+  const uint16_t x = pixel % kFrameWidth;
+  const uint16_t y = pixel / kFrameWidth;
+  if ((x & 1) || (y & 1)) return;
+  const size_t chromaPixel = static_cast<size_t>(y >> 1) * kChromaWidth + (x >> 1);
+  setPacked4(u4Cache, chromaPixel, uValue >> 4);
+  setPacked4(v4Cache, chromaPixel, vValue >> 4);
+}
+
+uint8_t getY4(uint16_t x, uint16_t y) {
+  return getPacked4(y4Cache, static_cast<size_t>(y) * kFrameWidth + x);
+}
+
+uint16_t yuv4ToRgb565(uint8_t y4, uint8_t u4, uint8_t v4) {
+  const int c = max(0, static_cast<int>(y4) * 17 - 16);
+  const int d = (static_cast<int>(u4) << 4) - 128;
+  const int e = (static_cast<int>(v4) << 4) - 128;
+  const uint8_t red = constrain((298 * c + 409 * e + 128) >> 8, 0, 255);
+  const uint8_t green = constrain((298 * c - 100 * d - 208 * e + 128) >> 8, 0, 255);
+  const uint8_t blue = constrain((298 * c + 516 * d + 128) >> 8, 0, 255);
+  return (static_cast<uint16_t>(red >> 3) << 11) |
+         (static_cast<uint16_t>(green >> 2) << 5) | (blue >> 3);
 }
 
 void prepareRollingRow(uint16_t mbY) {
@@ -575,11 +593,8 @@ void renderApproxCacheToLcd() {
         const int16_t dy = static_cast<int16_t>(y) - kFrameHeight / 2;
         uint16_t color = 0;
         if (dx * dx + dy * dy <= (kFrameWidth / 2) * (kFrameWidth / 2)) {
-          const uint8_t packedY = y4Cache[pixel >> 1];
-          const uint8_t y4 = (pixel & 1) ? (packedY & 0x0F) : (packedY >> 4);
-          const uint8_t gray = y4 * 17;
-          color = (static_cast<uint16_t>(gray >> 3) << 11) |
-                  (static_cast<uint16_t>(gray >> 2) << 5) | (gray >> 3);
+          const size_t chromaPixel = static_cast<size_t>(y >> 1) * kChromaWidth + (x >> 1);
+          color = yuv4ToRgb565(getY4(x, y), getPacked4(u4Cache, chromaPixel), getPacked4(v4Cache, chromaPixel));
         }
         const size_t output = (static_cast<size_t>(line) * kFrameWidth + x) * 2;
         presentBuffer[output] = color >> 8;
@@ -617,6 +632,8 @@ void beginApproxFrame() {
   rollingImage = {rollingImageData, kSourceMbWidth, 2, nullptr, nullptr, nullptr};
   memset(mbPixelWords, 0, kMbPixelBytes);
   memset(y4Cache, 0, kY4Bytes);
+  memset(u4Cache, 0x88, kChroma4Bytes);
+  memset(v4Cache, 0x88, kChroma4Bytes);
   frameNextMb = 0;
   frameSliceId = 0;
   frameState = FrameState::Decoding;
@@ -631,7 +648,8 @@ bool decodeApproxSlice(uint8_t *nal, size_t nalLength) {
   stats.lastRbspBytes = rbspLength;
   stats.lastSliceBits = lastSliceDataBit;
   stats.lastNalTail = 0;
-  for (size_t index = nalLength > 4 ? nalLength - 4 : 0; index < nalLength; ++index) {
+  const size_t compactLength = rbspLength + 1;
+  for (size_t index = compactLength > 4 ? compactLength - 4 : 0; index < compactLength; ++index) {
     stats.lastNalTail = (stats.lastNalTail << 8) | nal[index];
   }
   strmData_t stream{};
@@ -767,7 +785,7 @@ void parseCompletedNal() {
     frameState = FrameState::Ready;
     return;
   }
-  // ponytail: route-lite presents a mostly decoded IDR; replace with full YUV reconstruction when CAVLC tail is fixed.
+  // ponytail: publish the intact decoded prefix; replace after the Royal 3C47 trailer is fully understood.
   if (frameOpen && decodeThisAu && failed && frameNextMb >= (kSourceMbWidth * kSourceMbHeight * 3) / 4) {
     ++stats.approxFrames;
     ++stats.liteFrames;
@@ -927,7 +945,6 @@ void parseRoyalStart(const uint8_t *payload, size_t length) {
 }
 
 void trackRoyalPayload(const uint8_t *payload, size_t length, bool marker) {
-  (void)marker;
   if (length < 1) return;
   if (length >= 2 && payload[0] == 0x3C && payload[1] == 0x87) {
     completeLiveNal();
@@ -947,13 +964,22 @@ void trackRoyalPayload(const uint8_t *payload, size_t length, bool marker) {
     ++stats.seiPackets;
     return;
   }
+  static uint8_t unknownLogs;
+  if (unknownLogs < 16) {
+    Serial.printf("VIDEO UNKNOWN len=%u marker=%u head=", static_cast<unsigned>(length), marker ? 1 : 0);
+    const size_t shown = min<size_t>(length, 12);
+    for (size_t index = 0; index < shown; ++index) Serial.printf("%02X", payload[index]);
+    Serial.println();
+    ++unknownLogs;
+  }
   ++stats.unsupportedNal;
 }
 void freeVideoMemory() {
   if (freeSlots) vQueueDelete(freeSlots);
   if (readySlots) vQueueDelete(readySlots);
   heap_caps_free(y4Cache);
-  heap_caps_free(class2Cache);
+  heap_caps_free(u4Cache);
+  heap_caps_free(v4Cache);
   heap_caps_free(liveNal);
   heap_caps_free(rbspScratch);
   heap_caps_free(mbRows);
@@ -963,7 +989,8 @@ void freeVideoMemory() {
   heap_caps_free(presentBuffer);
   heap_caps_free(rtpSlots);
   y4Cache = nullptr;
-  class2Cache = nullptr;
+  u4Cache = nullptr;
+  v4Cache = nullptr;
   liveNal = nullptr;
   rbspScratch = nullptr;
   mbRows = nullptr;
@@ -987,13 +1014,15 @@ void begin() {
   rollingImageData = static_cast<uint8_t *>(heap_caps_malloc(kRollingImageBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   mbPixelWords = static_cast<uint32_t *>(heap_caps_malloc(kMbPixelBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   y4Cache = static_cast<uint8_t *>(heap_caps_malloc(kY4Bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  u4Cache = static_cast<uint8_t *>(heap_caps_malloc(kChroma4Bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+  v4Cache = static_cast<uint8_t *>(heap_caps_malloc(kChroma4Bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   mbRows = static_cast<mbStorage_t (*)[kSourceMbWidth]>(heap_caps_malloc(kMbRowsBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   mbLayer = static_cast<macroblockLayer_t *>(heap_caps_malloc(kMbLayerBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   liveNal = static_cast<uint8_t *>(heap_caps_malloc(kLiveNalBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   rbspScratch = static_cast<uint8_t *>(heap_caps_malloc(kRbspScratchBytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
   presentBuffer = static_cast<uint8_t *>(heap_caps_malloc(kPresentBytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
   rtpSlots = static_cast<RtpSlot *>(heap_caps_malloc(sizeof(RtpSlot) * kPacketSlotCount, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-  const bool buffersReady = y4Cache && mbRows && mbLayer && rollingImageData && mbPixelWords && liveNal && rbspScratch && presentBuffer && rtpSlots;
+  const bool buffersReady = y4Cache && u4Cache && v4Cache && mbRows && mbLayer && rollingImageData && mbPixelWords && liveNal && rbspScratch && presentBuffer && rtpSlots;
   if (buffersReady) {
     freeSlots = xQueueCreateStatic(kPacketSlotCount, sizeof(uint8_t), freeSlotQueueStorage, &freeSlotsStorage);
     readySlots = xQueueCreateStatic(kPacketSlotCount, sizeof(uint8_t), readySlotQueueStorage, &readySlotsStorage);
@@ -1003,6 +1032,8 @@ void begin() {
       xQueueSend(freeSlots, &slot, 0);
     }
     memset(y4Cache, 0, kY4Bytes);
+    memset(u4Cache, 0x88, kChroma4Bytes);
+    memset(v4Cache, 0x88, kChroma4Bytes);
     memset(rollingImageData, 128, kRollingImageBytes);
     memset(mbPixelWords, 0, kMbPixelBytes);
     memset(mbRows, 0, kMbRowsBytes);
@@ -1012,8 +1043,8 @@ void begin() {
     const BaseType_t taskStarted = xTaskCreatePinnedToCore(videoTask, "dash-video", kVideoTaskStack, nullptr, 2,
                                                             &videoTaskHandle, 1);
     if (taskStarted == pdPASS) {
-      Serial.printf("VIDEO READY frame=%ux%u cache=%u live_nal=%u rolling=%u slots=%u present=%u heap=%u\n",
-                    kFrameWidth, kFrameHeight, static_cast<unsigned>(kY4Bytes),
+      Serial.printf("VIDEO READY frame=%ux%u yuv4=%u live_nal=%u rolling=%u slots=%u present=%u heap=%u\n",
+                    kFrameWidth, kFrameHeight, static_cast<unsigned>(kY4Bytes + kChroma4Bytes * 2),
                     static_cast<unsigned>(kLiveNalBytes), static_cast<unsigned>(kMbRowsBytes + kMbLayerBytes),
                     static_cast<unsigned>(kPacketSlotCount), static_cast<unsigned>(kPresentBytes), ESP.getFreeHeap());
       return;
@@ -1096,7 +1127,7 @@ void update() {
   const uint32_t now = millis();
   const uint32_t freeInternalNow = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   const uint32_t minInternal = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
-  if (freeInternalNow < kEmergencyHeapBytes || minInternal < kMinDecodeHeapBytes) {
+  if (freeInternalNow < kEmergencyHeapBytes) {
     stopRequested = true;
   }
   if (!stopRequested && frameState == FrameState::Ready) {

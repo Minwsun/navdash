@@ -146,21 +146,14 @@ void begin() {
   initialized = true;
 
   fillRect(0, 0, kTftWidth, kTftHeight, 0x0000);
-  fillRect(0, 0, kTftWidth, 2, 0x07FF);
-  fillRect(0, kTftHeight - 2, kTftWidth, 2, 0x07FF);
-  fillRect(kViewX, kViewY, kViewWidth, kViewHeight, 0x0841);
   Serial.println("TFT READY live-h264 ili9341v");
 }
 
 void updateVideoStatus(uint32_t packets, uint32_t idr, uint32_t bytes, bool live) {
-  const uint16_t activeColor = live ? 0x07E0 : 0xF800;
-  fillRect(8, 212, 304, 20, 0x0000);
-  fillRect(14, 216, 14, 14, activeColor);
-  fillRect(40, 216, 260, 4, 0x2104);
-  fillRect(40, 216, min<uint32_t>(260, packets), 4, 0xFFFF);
-  fillRect(40, 224, 260, 4, 0x2104);
-  fillRect(40, 224, min<uint32_t>(260, idr * 10), 4, 0x07FF);
-  fillRect(40, 230, min<uint32_t>(260, bytes / 128), 2, 0xF81F);
+  (void)packets;
+  (void)idr;
+  (void)bytes;
+  (void)live;
 }
 
 void drawH264Bytes(const uint8_t *payload, size_t length, bool newFrame) {
