@@ -1,12 +1,40 @@
+# PlatformIO & Build artifacts
 .pio/
 .vscode/
+.idea/
+*.orig
+*.rej
+*.tmp
+*.bak
+
+# Captures, Dumps & Research Artifacts
 captures/
 ipa/
+analysis/
 .logn
 .tools/
-analysis/
+*.log
+*.pcap
+*.pcapng
+
+# Python caches & build
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+
+# Raw video and frame dumps
 *.h264
 *.raw
+*.yuv
+*.rgb
 *.png
+
+# Node / Web / Watch dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS specific files
+.DS_Store
+Thumbs.db
